@@ -1,0 +1,69 @@
+def Binarize(img,theshPer,SmallSize):
+    nobkg=skif.gaussian_filter(img,0.)-skif.gaussian_filter(img,20.)
+    nobkg=skif.gaussian_filter(( np.max(nobkg)-nobkg)**2,0)
+    nobckg=img
+    thresh= skif.threshold_otsu(nobkg, nbins=2)
+    bw=nobkg>theshPer*thresh
+    se=skimage.morphology.disk(15)
+    bw=skimage.morphology.binary_closing(bw,se)
+    se=skimage.morphology.disk(1)
+    bw=skimage.morphology.binary_opening(bw,se)
+    bw=skimage.morphology.remove_small_objects(bw>0,SmallSize)
+    return bw
+
+class Ellipse:
+     def __init__(self,cx,cy,L,l,Angle):
+         self.cx =cx
+         self.cy =cy
+         self.L =L
+         self.l =l
+         self.Angle =Angle
+            
+def CheckAngleDirection(HeadPosX,HeadPosY,cx,cy,L,Angle):
+    ApogX=cx+math.cos(Angle)*L
+    ApogY=cy+math.sin(Angle)*L
+    ApogXm=cx+math.cos(Angle+math.pi)*L
+    ApogYm=cy+math.sin(Angle+math.pi)*L
+    if (HeadPosX-ApogX)**2+(HeadPosY-ApogY)**2> (HeadPosX-ApogXm)**2+(HeadPosY-ApogYm)**2:
+        Angle=Angle+math.pi
+    return Angle
+
+def DrawEllipse(ell,N):
+    t=np.linspace(0,2*math.pi,20)
+    R=np.array([[math.cos(ell.Angle),-math.sin(ell.Angle)],[math.sin(ell.Angle),math.cos(ell.Angle)]])
+    a=ell.L*np.cos(t)
+    b=ell.l*np.sin(t)
+    xy=np.vstack((a,b))
+    xy=np.dot(R,xy)
+    xy=xy+np.array([[ell.cx],[ell.cy]])
+    return xy
+
+def FitEllipse(bw):
+    label_img = skimage.measure.label(bw)
+    props=skimage.measure.regionprops(label_img)[0]
+    Y,X=props.coords[:,0],props.coords[:,1]
+    return Ellipse(props.centroid[1],props.centroid[0],props.major_axis_length/2.,props.minor_axis_length/2.,-props.orientation)
+
+def ComputeCurvature(X,Y,Ell1,Ell2):
+    cx1=Ell1.cx;cy1=Ell1.cy;Angle1=Ell1.Angle
+    cx2=Ell2.cx;cy2=Ell2.cy;Angle2=Ell2.Angle
+    
+    # Find Intersection between minor axis:
+    SmallAxes1=np.transpose(np.array([-math.sin(Angle1),math.cos(Angle1)]))
+    SmallAxes2=np.transpose(np.array([-math.sin(Angle2),math.cos(Angle2)]))
+    
+    A=np.array([[SmallAxes1[0],-SmallAxes2[0]],[SmallAxes1[1],-SmallAxes2[1]]])
+    b=np.array([cx2-cx1,cy2-cy1])
+    t=np.linalg.solve(A,b)
+    
+    CenterCurv=np.array([cx1,cy1])+t[0]*SmallAxes1
+
+    Rmoy=np.mean(np.sqrt((X-CenterCurv[0])**2+(Y-CenterCurv[1])**2));
+    Center1=np.array([cx1,cy1])
+    Center2=np.array([cx2,cy2])
+    cc1=np.hstack([Center1-CenterCurv,0])
+    cc2=np.hstack([Center2-CenterCurv,0])
+    V=np.cross(cc1,cc2)
+    Sign=2.*(V[2]>0)-1;
+    C=np.array([Sign*1/Rmoy,CenterCurv[0],CenterCurv[1],t[0],t[1]])
+    return C
